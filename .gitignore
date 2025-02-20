@@ -1,0 +1,38 @@
+# Terraform state files
+*.tfstate
+*.tfstate.backup
+
+# Terraform crash logs
+crash.log
+
+# Terraform variables (contain sensitive data)
+*.tfvars
+*.tfvars.json
+
+# Terraform provider cache
+.terraform/
+.terraform.lock.hcl
+
+# Ignore sensitive AWS credentials (if any)
+.aws/
+credentials
+
+# Ignore temporary files
+*.log
+*.bak
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# Ignore build artifacts
+build/
+dist/
+
+# Ignore editor and OS-specific files
+.vscode/
+.idea/
+*.iml
+*.sublime-workspace
+*.sublime-project
+
