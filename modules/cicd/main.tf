@@ -197,6 +197,17 @@ resource "aws_iam_role_policy" "codebuild_policy" {
     Statement = [
       {
         Effect = "Allow"
+        Resource = [
+          "arn:aws:s3:::pflegia-artifacts-534249315747",
+          "arn:aws:s3:::pflegia-artifacts-534249315747/*"
+        ]
+        Action = [
+          "s3:GetObject",
+          "s3:ListBucket"
+        ]
+      },
+      {
+        Effect = "Allow"
         Resource = ["*"]
         Action = [
           "logs:CreateLogGroup",
