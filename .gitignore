@@ -1,6 +1,7 @@
 # Terraform state files
 *.tfstate
 *.tfstate.backup
+.terraform/
 
 # Terraform crash logs
 crash.log
@@ -36,3 +37,4 @@ dist/
 *.sublime-workspace
 *.sublime-project
 
+.terraform/
