@@ -3,10 +3,14 @@ resource "aws_codebuild_project" "main" {
   description   = "Build and push Docker image to ECR"
   build_timeout = "10"
   service_role  = aws_iam_role.codebuild_role.arn
-  
 
   artifacts {
     type = "CODEPIPELINE"
+    packaging = "ZIP"
+  }
+
+  cache {
+    type = "NO_CACHE"
   }
 
   environment {
@@ -20,11 +24,32 @@ resource "aws_codebuild_project" "main" {
       name  = "ECR_REPOSITORY_URL"
       value = var.ecr_repository_url
     }
+
+    environment_variable {
+      name  = "AWS_DEFAULT_REGION"
+      value = data.aws_region.current.name
+    }
+
+    environment_variable {
+      name  = "PROJECT_NAME"
+      value = var.project_name
+    }
+
+    environment_variable {
+      name  = "CONTAINER_PORT"
+      value = "5000"
+    }
   }
 
   source {
-    type = "CODEPIPELINE"
+    type      = "CODEPIPELINE"
     buildspec = "buildspec.yml"
+  }
+
+  logs_config {
+    cloudwatch_logs {
+      status = "ENABLED"
+    }
   }
 
   tags = {
@@ -32,6 +57,86 @@ resource "aws_codebuild_project" "main" {
     Environment = var.environment
   }
 }
+
+resource "aws_codepipeline" "main" {
+  name     = "${var.project_name}-pipeline"
+  role_arn = aws_iam_role.codepipeline_role.arn
+
+  artifact_store {
+    location = aws_s3_bucket.artifacts.bucket
+    type     = "S3"
+  }
+
+  stage {
+    name = "Source"
+
+    action {
+      name             = "Source"
+      category         = "Source"
+      owner            = "AWS"
+      provider         = "CodeStarSourceConnection"
+      version          = "1"
+      output_artifacts = ["source_output"]
+
+      configuration = {
+        ConnectionArn          = aws_codestarconnections_connection.github.arn
+        FullRepositoryId      = var.repository_name
+        BranchName           = var.branch_name
+        OutputArtifactFormat = "CODE_ZIP"
+      }
+    }
+  }
+
+  stage {
+    name = "Build"
+
+    action {
+      name            = "Build"
+      category        = "Build"
+      owner           = "AWS"
+      provider        = "CodeBuild"
+      input_artifacts = ["source_output"]
+      output_artifacts = ["build_output"]
+      version         = "1"
+
+      configuration = {
+        ProjectName = aws_codebuild_project.main.name
+        PrimarySource = "source_output"
+      }
+    }
+  }
+
+  stage {
+    name = "Deploy"
+
+    action {
+      name            = "Deploy"
+      category        = "Deploy"
+      owner           = "AWS"
+      provider        = "CodeDeployToECS"
+      input_artifacts = ["build_output"]
+      version         = "1"
+
+      configuration = {
+        ApplicationName                = aws_codedeploy_app.main.name
+        DeploymentGroupName           = aws_codedeploy_deployment_group.main.deployment_group_name
+        TaskDefinitionTemplateArtifact = "build_output"
+        AppSpecTemplateArtifact       = "source_output"
+        TaskDefinitionTemplatePath    = "taskdef.json"
+        AppSpecTemplatePath          = "appspec.yaml"
+        Image1ArtifactName          = "build_output"
+        Image1ContainerName         = "IMAGE_NAME"
+      }
+    }
+  }
+
+  tags = {
+    Name        = "${var.project_name}-pipeline"
+    Environment = var.environment
+  }
+}
+
+data "aws_region" "current" {}
 
 resource "aws_codedeploy_app" "main" {
   name             = "${var.project_name}-app"
@@ -80,77 +185,10 @@ resource "aws_codedeploy_deployment_group" "main" {
       }
     }
   }
-}
 
-resource "aws_codepipeline" "main" {
-  name     = "${var.project_name}-pipeline"
-  role_arn = aws_iam_role.codepipeline_role.arn
-
-  artifact_store {
-    location = aws_s3_bucket.artifacts.bucket
-    type     = "S3"
-  }
-
-  stage {
-    name = "Source"
-
-    action {
-      name             = "Source"
-      category         = "Source"
-      owner            = "AWS"
-      provider         = "CodeStarSourceConnection"
-      version          = "1"
-      output_artifacts = ["source_output"]
-
-      configuration = {
-        ConnectionArn    = aws_codestarconnections_connection.github.arn
-        FullRepositoryId = var.repository_name
-        BranchName      = var.branch_name
-      }
-    }
-  }
-
-  stage {
-    name = "Build"
-
-    action {
-      name            = "Build"
-      category        = "Build"
-      owner           = "AWS"
-      provider        = "CodeBuild"
-      input_artifacts = ["source_output"]
-      output_artifacts = ["build_output"]
-      version         = "1"
-
-      configuration = {
-        ProjectName = aws_codebuild_project.main.name
-      }
-    }
-  }
-
-  stage {
-    name = "Deploy"
-
-    action {
-      name            = "Deploy"
-      category        = "Deploy"
-      owner           = "AWS"
-      provider        = "CodeDeployToECS"
-      input_artifacts = ["build_output"]
-      version         = "1"
-
-      configuration = {
-        ApplicationName                = aws_codedeploy_app.main.name
-        DeploymentGroupName           = aws_codedeploy_deployment_group.main.deployment_group_name
-        TaskDefinitionTemplateArtifact = "build_output"
-        AppSpecTemplateArtifact       = "build_output"
-      }
-    }
-  }
-
-  tags = {
-    Name        = "${var.project_name}-pipeline"
-    Environment = var.environment
+  auto_rollback_configuration {
+    enabled = true
+    events  = ["DEPLOYMENT_FAILURE"]
   }
 }
 
@@ -170,7 +208,6 @@ resource "aws_codestarconnections_connection" "github" {
 
 data "aws_caller_identity" "current" {}
 
-# IAM Role for CodeBuild
 resource "aws_iam_role" "codebuild_role" {
   name = "${var.project_name}-codebuild-role"
 
@@ -197,17 +234,6 @@ resource "aws_iam_role_policy" "codebuild_policy" {
     Statement = [
       {
         Effect = "Allow"
-        Resource = [
-          "arn:aws:s3:::pflegia-artifacts-534249315747",
-          "arn:aws:s3:::pflegia-artifacts-534249315747/*"
-        ]
-        Action = [
-          "s3:GetObject",
-          "s3:ListBucket"
-        ]
-      },
-      {
-        Effect = "Allow"
         Resource = ["*"]
         Action = [
           "logs:CreateLogGroup",
@@ -227,7 +253,6 @@ resource "aws_iam_role_policy" "codebuild_policy" {
   })
 }
 
-# IAM Role for CodeDeploy
 resource "aws_iam_role" "codedeploy_role" {
   name = "${var.project_name}-codedeploy-role"
 
@@ -250,7 +275,6 @@ resource "aws_iam_role_policy_attachment" "codedeploy_policy" {
   policy_arn = "arn:aws:iam::aws:policy/AWSCodeDeployRoleForECS"
 }
 
-# IAM Role for CodePipeline
 resource "aws_iam_role" "codepipeline_role" {
   name = "${var.project_name}-codepipeline-role"
 
